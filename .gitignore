@@ -1,0 +1,15 @@
+### .gitignore ###
+
+# Folder #
+.vscode
+__pycache__
+Mods
+dist
+build
+
+# Binary file #
+*.exe
+
+# Other #
+*-bak.py
+mod_list.md
