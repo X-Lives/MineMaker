@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import subprocess
 import requests
@@ -7,18 +8,22 @@ import Function.tools as tools
 
 CVersions = tools.CompareVersions()
 Config = tools.Config()
+Time_m = tools.Time_More()
 
-# 获取 Modrinth 上的 Mod URL
-def get_mod_url(mod_name):
-    url = f"https://api.modrinth.com/v2/search?query={mod_name}&limit=1"
+url_origin = 'https://api.modrinth.com/v2/'
+url_origin_cn = 'https://mod.mcimirror.top/modrinth/v2/'
+
+# Get the Mod ID on Modrinth
+def get_mod_id(mod_name):
+    url = f"{url_origin_cn}search?query={mod_name}&limit=1" #cn mirror
     try:
         response = requests.get(url)
-        response.raise_for_status()  # 如果请求失败，抛出异常
+        response.raise_for_status()  # Throw an exception if the request fails.
         data = response.json()
         if data['hits']:
-            # 返回第一个匹配的 mod 的 URL 和 slug
-            mod_slug = data['hits'][0]['slug']
-            return f"https://modrinth.com/mod/{mod_slug}", mod_slug
+            # Returns the URL and slug of the first matching mod.
+            id = data['hits'][0]['project_id']
+            return id
         else:
             print(f"Mod '{mod_name}' not found on Modrinth.")
             return None, None
@@ -26,19 +31,61 @@ def get_mod_url(mod_name):
         print(f"Error fetching mod info: {e}")
         return None, None
 
-# 获取符合条件的 Mod 版本
-def get_latest_mod_version(mod_slug):
-    url = f"https://api.modrinth.com/v2/project/{mod_slug}/version"
+# Check if the mod is eligible
+def check_mod(mod_id):
+    url = f"{url_origin_cn}project/{mod_id}"
     try:
         response = requests.get(url)
-        response.raise_for_status()  # 如果请求失败，抛出异常
+        response.raise_for_status()
+        data = response.json()
+        if data:
+            Game_Version_Range_Start = Config.get('Game_Version_Range_Start')
+            Game_Version_Range_End = Config.get('Game_Version_Range_End')
+            Platfrom = Config.get('Platform').strip().lower()
+            if Platfrom in data['loaders']:
+                for i in range(len(data['game_versions'])):
+                    if CVersions.check_version(Game_Version_Range_Start, Game_Version_Range_End, data['game_versions'][i]):
+                        return True
+        return False
+    except requests.exceptions.RequestException as e:
+        print(f"Error checking mod: {e}")
+        return None
+
+# Get the mod info
+def get_mod(mod_id):
+    url = f"{url_origin_cn}project/{mod_id}"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        if data:
+            client_side = data['client_side']
+            server_side = data['server_side']
+            mod_slug = data['slug']
+            title = data['title']
+            return client_side, server_side, mod_slug, title, f"https://modrinth.com/mod/{mod_slug}", data
+        else:
+            return None, None, None, None, None, None
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching mod: {e}")
+        return None, None, None, None, None, None
+
+# Get the mod versions
+# Difference from function: check_mod.
+# - Get more detailed Version parameters instead of checking.
+# - Can return the download address.
+def get_mod_versions(mod_id):
+    url = f"{url_origin_cn}project/{mod_id}/version"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # If the request fails, throw an exception.
         versions = response.json()
 
         Game_Version_Range_Start = Config.get('Game_Version_Range_Start')
         Game_Version_Range_End = Config.get('Game_Version_Range_End')
         Platfrom = Config.get('Platform').strip().lower()
 
-        # 筛选符合条件的版本
+        # Filter the versions that meet the conditions
         for version in versions:
             if Platfrom in version['loaders']:
                 for i in range(len(version['game_versions'])):
@@ -49,18 +96,34 @@ def get_latest_mod_version(mod_slug):
         print(f"Error fetching mod versions: {e}")
         return None
 
-# 下载 Mod 文件
-def download_mod(version, mod_slug):
-    # 获取下载链接
+def check_mod_dowload(version):
+    file_name = version['files'][0]['filename']
+    mods_dir = "Mods"
+
+    # Create the Mods folder if it doesn't exist
+    if not os.path.exists(mods_dir):
+        os.makedirs(mods_dir)
+        return None
+    # Check if the mod is already downloaded
+    file_path = os.path.join(mods_dir, file_name)
+    if os.path.exists(file_path):
+        print(f"\033[32mMod already downloaded\033[0m: \033[1m{file_path}\033[0m")
+        return True
+    else:
+        return False
+
+# Download the mod file
+def download_mod(version):
+    # Get the download link
     download_url = version['files'][0]['url']
     file_name = version['files'][0]['filename']
     mods_dir = "Mods"
 
-    # 创建 Mods 文件夹，如果不存在
+    # Create the Mods folder if it doesn't exist
     if not os.path.exists(mods_dir):
         os.makedirs(mods_dir)
 
-    # 下载文件
+    # Download the file
     file_path = os.path.join(mods_dir, file_name)
     try:
         response = requests.get(download_url, stream=True)
@@ -71,83 +134,80 @@ def download_mod(version, mod_slug):
     except requests.exceptions.RequestException as e:
         print(f"\033[31mError downloading mod: {e}\033[0m")
 
-# 将 mod 信息追加到 Markdown 文件
-def append_to_md_file(name, url, version_number="N/A", filename="mod_list.md"):
-    with open(filename, "a") as file:
-        file.write(f"- [{name}]({url}) | v{version_number}\n")
+def category_mods(file_name, client_side, server_side):
+    client_dir = "Client"
+    server_dir = "Server"
+    if not os.path.exists(client_dir):
+        os.makedirs(client_dir)
+    if not os.path.exists(server_dir):
+        os.makedirs(server_dir)
+    
+    if client_side == "required" or client_side == "optional":
+        shutil.copy('Mods\\' + file_name, client_dir)
+    
+    if server_side == "required" or server_side == "optional":
+        shutil.copy('Mods\\' + file_name, server_dir)
 
-# 打开 mod_list.md 文件
+
+# Append the mod information to the Markdown file
+def append_to_md_file(title, url, client_side, server_side, version_number="N/A", filename="mod_list.md"):
+    with open(filename, "a") as file:
+        file.write(f"- [{title}]({url}) | v{version_number} | client-side: {client_side} server-side: {server_side}\n")
+
+# Open mod_list.md file
 def open_md_file(filename="mod_list.md"):
     script_dir = os.path.dirname(os.path.realpath(__file__))
     file_path = os.path.join(script_dir, filename)
 
     try:
-        if os.name == 'nt':  # Windows 系统
+        if os.name == 'nt':  # Windows system
             subprocess.run(['start', 'notepad', file_path], check=True, shell=True)
-        elif os.name == 'posix':  # macOS / Linux 系统
+        elif os.name == 'posix':  # macOS / Linux system
             subprocess.run(['open', file_path], check=True)
         else:
             print("\033[31mUnsupported OS\033[0m")
     except Exception as e:
         print(f"\033[31mError opening file: {e}\033[0m")
 
-# Main Program
-def main():
-    while True:
-        # Get user input mod name.
-        name = input("Input...\nName: ").strip()
+def add_res(version, data):
+    file_name = version['files'][0]['filename'].replace('.jar', '.json')
+    res_dir = "Res"
+    #i = 1
 
-        # Get mod URL.
-        url, mod_slug = get_mod_url(name)
-        if url and mod_slug:
-            # Get the latest eligible mod version.
-            version = get_latest_mod_version(mod_slug)
-            if version:
-                # Download mod.
-                download_mod(version, mod_slug)
-                # Write mod information to Markdown file.
-                version_number = version['version_number']
-                append_to_md_file(name, url, version_number)
-                print(f"\033[32mAdded: \033[1m[{name}]({url}) | v{version_number}\033[0m")
+    if not os.path.exists(res_dir):
+        os.makedirs(res_dir)
+    #while os.path.exists(os.path.join(res_dir, file_name)):
+    #    file_name = file_name + i
+    #    i = i + 1
+    with open(os.path.join(res_dir, file_name), 'w') as file:
+        file.write(json.dumps(data, indent=4))
 
-            else:
-                print(f"\033[31mNo suitable version found for '{name}' with \033[1m{Config.get('Platform')}\033[0m platform and game version >= \033[1m{Config.get('Game_Version')}\033[0m.")
-                break
-
-        # Print the current content of the md file.
-        print("\n\033[32mCurrent content of the md file:\033[0m")
-        with open("mod_list.md", "r") as file:
-            print(file.read())
-
-        # Ask if continue.
-        cont = input("\n\033[32mDo you want to add another mod? (yes/no):\033[0m ").strip().lower()
-        if cont != "yes":
-            break
-
-    # Open md file at the end.
-    # open_md_file()
-
-def main_keyboard(selected_text):
-    print(f"Selected text: \033[1m{selected_text}\033[0m / running...")
+def main(selected_text):
+    # print(f"Selected text: \033[1m{selected_text}\033[0m / running...")
     start_time = time.perf_counter() # Time counter start.
     name = selected_text.strip()
     # Get Mod URL
-    url, mod_slug = get_mod_url(name)
-    if url and mod_slug:
-        # Get the latest eligible mod version.
-        version = get_latest_mod_version(mod_slug)
-        if version:
-            # Dowload Mod.
-            download_mod(version, mod_slug)
-            # Write mod information to Markdown file.
-            version_number = version['version_number']
-            append_to_md_file(name, url, version_number)
-            print(f"\033[32mAdded\033[0m: \033[1m[{name}]({url}) | v{version_number}\033[0m")
-
+    mod_id = get_mod_id(name)
+    if mod_id:
+        if check_mod(mod_id):
+            client_side, server_side, mod_slug, title, url, data = get_mod(mod_id)
+            version = get_mod_versions(mod_id)
+            if version:
+                if not check_mod_dowload(version):
+                    # Dowload Mod.
+                    download_mod(version)
+                    category_mods(version['files'][0]['filename'], client_side, server_side)
+                    # Write mod information to Markdown file.
+                    version_number = version['version_number']
+                    append_to_md_file(title, url, client_side, server_side, version_number)
+                    add_res(version, data)
+                    print(f"\033[32mAdded\033[0m: \033[1m[{title}]({url}) | v{version_number} | client-side: {client_side} server-side: {server_side}\033[0m")
+            else:
+                print(f"\033[31mNo suitable version found for '{name}' with \033[1m{Config.get('Platform')}\033[0m platform and game version >= \033[1m{Config.get('Game_Version')}\033[0m.")
         else:
-            print(f"\033[31mNo suitable version found for '{name}' with \033[1m{Config.get('Platform')}\033[0m platform and game version >= \033[1m{Config.get('Game_Version')}\033[0m.")
+            print(f"\033[31mMod '{name}' is not eligible for the current game version.\033[0m")
     end_time = time.perf_counter() # Time counter end.
-    print(f"Time elapsed: {end_time - start_time:.2f} seconds.")
+    print(f"Time elapsed: {Time_m.check(end_time, start_time)} seconds.")
 
 def print_md_file():
     # Print the current content of the md file.

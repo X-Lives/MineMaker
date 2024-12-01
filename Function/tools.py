@@ -34,10 +34,44 @@ class Config:
     def __init__(self):
         self.current_dir = os.getcwd()
     def get(self, ini):
-        with open(f"Config/{ini}.ini", "r") as get_file:
+        with open(self.current_dir + f"\\Config\\{ini}.ini", "r") as get_file:
             get_str = get_file.readline()
             get_str = get_str.replace("\n", "")
             return get_str
     def change(self, ini, change):
-        with open(f"Config/{ini}.ini", "w") as change_file:
+        with open(self.current_dir + f"\\Config\\{ini}.ini", "w") as change_file:
             change_file.write(change)
+
+class Check:
+    def file(self, file_path):
+        if os.path.exists(file_path):
+            return True
+        else:
+            return False
+    def dir(self, dir_path):
+        if os.path.isdir(dir_path):
+            return True
+        else:
+            return False
+
+class get:
+    def folders(self, directory):
+        folders = [folder for folder in os.listdir(directory) if os.path.isdir(os.path.join(directory, folder))]
+        if len(folders) == 0:
+            print('Error found folders')
+            return None
+        else:
+            return folders
+
+class Time_More:
+    def check(self, end_time, start_time):
+        duration = end_time - start_time
+        if duration < 5:
+            return f"\033[0;32m{duration:.2f}\033[0m"
+        elif duration < 10:
+            return f"\033[0;33m{duration:.2f}\033[0m"
+        elif duration < 20:
+            return f"\033[0;31m{duration:.2f}\033[0m"
+        else:
+            print(f"\033[1;33mWARN\033[0m | {duration} is too long!")
+            return f"{duration:.2f}\033[0m"
