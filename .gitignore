@@ -15,3 +15,8 @@ venv
 # Other #
 *-bak.py
 mod_list.md
+
+## Achieve
+__pycache__
+.idea
+venv
